@@ -1,0 +1,99 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Position {
+  GK
+  DF
+  MD
+  FW
+}
+
+model User {
+  id        String         @id @default(cuid())
+  email     String?        @unique
+  createdAt DateTime       @default(now())
+  sessions  Session[]
+  accounts  OAuthAccount[]
+  team      Team?
+}
+
+model OAuthAccount {
+  id             String @id @default(cuid())
+  provider       String
+  providerUserId String
+  userId         String
+  user           User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([userId])
+}
+
+model Team {
+  id              String            @id @default(cuid())
+  userId          String            @unique
+  name            String
+  budgetCents     Int               @default(500000000)
+  createdAt       DateTime          @default(now())
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  players         Player[]
+  TransferListing TransferListing[]
+}
+
+model Player {
+  id       String           @id @default(cuid())
+  name     String
+  position Position
+  skill    Int
+  tactic   Int
+  physical Int
+  teamId   String
+  team     Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  listing  TransferListing?
+}
+
+model TransferListing {
+  playerId         String   @id
+  teamId           String
+  askingPriceCents Int
+  createdAt        DateTime @default(now())
+  player           Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  team             Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@index([teamId])
+}
+
+model Transfer {
+  id                  String   @id @default(cuid())
+  playerId            String
+  sellerTeamId        String
+  buyerTeamId         String
+  askingPriceCents    Int
+  soldPriceCents      Int
+  createdAt           DateTime @default(now())
+  snapshotSkill       Int
+  snapshotTactic      Int
+  snapshotPhysical    Int
+  snapshotPosition    Position
+  buyerBalanceBefore  Int
+  buyerBalanceAfter   Int
+  sellerBalanceBefore Int
+  sellerBalanceAfter  Int
+
+  @@index([buyerTeamId])
+  @@index([sellerTeamId])
+}
