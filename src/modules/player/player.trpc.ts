@@ -39,37 +39,39 @@ export const playerRouter = router({
   page: authedProcedure
     .input(
       z.object({
-        cursor: z.number().nullish(), // Change to number for offset
+        cursor: z.number().nullish(), // offset
         limit: z.number().int().min(1).max(100).default(30),
         position: z.enum(["GK", "DF", "MD", "FW", "ALL"]).default("ALL"),
         forSale: z.boolean().optional(),
         teamScope: z.enum(["all", "mine"]).default("all"),
+        teamId: z.string().optional(), // <-- NEW explicit team filter
       })
     )
     .query(async ({ ctx, input }) => {
       const offset = input.cursor ?? 0;
-      
+
       console.log("Player pagination request:", {
         offset,
         limit: input.limit,
         position: input.position,
         forSale: input.forSale,
         teamScope: input.teamScope,
+        teamId: input.teamId,
         userId: ctx.user?.id,
       });
-
-      const meTeam =
-        input.teamScope === "mine"
-          ? await ctx.prisma.team.findUnique({
-              where: { userId: ctx.user!.id },
-              select: { id: true },
-            })
-          : null;
 
       const whereBase: Prisma.PlayerWhereInput = {};
       if (input.position !== "ALL") whereBase.position = input.position;
       if (input.forSale === true) whereBase.listing = { isNot: null };
-      if (input.teamScope === "mine") {
+
+      if (input.teamId) {
+        // explicit filter from Teams page
+        whereBase.teamId = input.teamId;
+      } else if (input.teamScope === "mine") {
+        const meTeam = await ctx.prisma.team.findUnique({
+          where: { userId: ctx.user!.id },
+          select: { id: true },
+        });
         if (!meTeam)
           throw new TRPCError({
             code: "BAD_REQUEST",
@@ -114,9 +116,7 @@ export const playerRouter = router({
 
   // List or edit price (owner only)
   listForSale: authedProcedure
-    .input(
-      z.object({ playerId: z.string(), priceCents: z.number().int().positive() })
-    )
+    .input(z.object({ playerId: z.string(), priceCents: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
       const meTeam = await ctx.prisma.team.findUnique({
         where: { userId: ctx.user!.id },
