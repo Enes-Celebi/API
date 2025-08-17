@@ -14,13 +14,23 @@ enum Position {
   FW
 }
 
+enum OnboardingStep {
+  NEED_USERNAME
+  NEED_TEAM
+  CREATING_TEAM
+  READY
+}
+
 model User {
-  id        String         @id @default(cuid())
-  email     String?        @unique
-  createdAt DateTime       @default(now())
-  sessions  Session[]
-  accounts  OAuthAccount[]
-  team      Team?
+  id              String           @id @default(cuid())
+  email           String?          @unique
+  username        String?          @unique
+  onboardingStep  OnboardingStep   @default(NEED_USERNAME)
+  createdAt       DateTime         @default(now())
+  sessions        Session[]
+  accounts        OAuthAccount[]
+  team            Team?
+  TeamCreationJob TeamCreationJob?
 }
 
 model OAuthAccount {
@@ -96,4 +106,22 @@ model Transfer {
 
   @@index([buyerTeamId])
   @@index([sellerTeamId])
+}
+
+enum JobStatus {
+  queued
+  running
+  done
+  failed
+}
+
+model TeamCreationJob {
+  id        String    @id @default(cuid())
+  userId    String    @unique
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  teamName  String
+  status    JobStatus @default(queued)
+  error     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 }

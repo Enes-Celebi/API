@@ -1,6 +1,27 @@
-version: "3.9"
 services:
-  redis:
-    image: redis:7
-    ports:
-      - "127.0.0.1:6379:6379"
+  migrate:
+    build: { context: ., dockerfile: Dockerfile }   # ← add
+    image: fm/api:latest
+    container_name: fm-migrate
+    env_file: [.env.docker]
+    command: ["npx", "prisma", "migrate", "deploy"]
+    restart: "no"
+
+  api:
+    build: { context: ., dockerfile: Dockerfile }   # ← add
+    image: fm/api:latest
+    container_name: fm-api
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    env_file: [.env.docker]
+    ports: ["4000:4000"]
+    command: ["node", "dist/server.js"]
+    restart: unless-stopped
+
+  worker:
+    build: { context: ., dockerfile: Dockerfile }   # ← add
+    image: fm/api:latest
+    container_name: fm-worker
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    env_file: [.env.docker]
+    command: ["node", "dist/workers/team.worker.js"]
+    restart: unless-stopped

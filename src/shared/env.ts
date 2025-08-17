@@ -18,4 +18,6 @@ export const env = {
   GOOGLE_REDIRECT_URI: must("GOOGLE_REDIRECT_URI"),
 
   REDIS_URL: process.env.REDIS_URL ?? "redis://localhost:6379",
+
+  FRONTEND_URL: process.env.FRONTEND_URL ?? "http://localhost:8080",
 };
