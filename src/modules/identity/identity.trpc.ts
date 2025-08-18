@@ -6,13 +6,27 @@ type Step = "NEED_USERNAME" | "NEED_TEAM" | "CREATING_TEAM" | "READY";
 export const identityRouter = router({
   ping: publicProcedure.query(() => ({ pong: true })),
 
-  me: authedProcedure.query(async ({ ctx }) => {
+  me: publicProcedure.query(async ({ ctx }) => {
+    if (!ctx.user) return null;
+
     const [user, team, job] = await Promise.all([
-      ctx.prisma.user.findUnique({ where: { id: ctx.user!.id } }),
-      ctx.prisma.team.findUnique({ where: { userId: ctx.user!.id }, include: { players: true } }),
-      ctx.prisma.teamCreationJob.findUnique({ where: { userId: ctx.user!.id } }),
+      ctx.prisma.user.findUnique({
+        where: { id: ctx.user.id },
+        select: {
+          id: true,
+          email: true,
+          username: true,
+          onboardingStep: true,
+        },
+      }),
+      ctx.prisma.team.findUnique({
+        where: { userId: ctx.user.id },
+        include: { players: true },
+      }),
+      ctx.prisma.teamCreationJob.findUnique({ where: { userId: ctx.user.id } }),
     ]);
-    if (!user) throw new TRPCError({ code: "UNAUTHORIZED" });
+
+    if (!user) return null; 
 
     let status: Step = user.onboardingStep as Step;
 
@@ -29,7 +43,7 @@ export const identityRouter = router({
       user: {
         id: user.id,
         email: user.email,
-        username: user.username,
+        username: user.username, 
         onboardingStep: status,
       },
       team,

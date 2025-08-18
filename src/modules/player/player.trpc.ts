@@ -1,11 +1,9 @@
-// server/routes/player.trpc.ts
-import { router, authedProcedure, z } from "../../trpc/procedures";
+import { router, publicProcedure, authedProcedure, z } from "../../trpc/procedures";
 import { TRPCError } from "@trpc/server";
 import type { Prisma } from "@prisma/client";
 
 export const playerRouter = router({
-  // Full list (kept for any existing views)
-  all: authedProcedure.query(async ({ ctx }) => {
+  all: publicProcedure.query(async ({ ctx }) => {
     return ctx.prisma.player.findMany({
       include: {
         team: { select: { id: true, name: true, budgetCents: true } },
@@ -15,7 +13,6 @@ export const playerRouter = router({
     });
   }),
 
-  // Debug endpoint to check actual player count and IDs
   debug: authedProcedure.query(async ({ ctx }) => {
     const allPlayers = await ctx.prisma.player.findMany({
       select: { id: true, name: true },
@@ -35,41 +32,35 @@ export const playerRouter = router({
     };
   }),
 
-  // Simple offset-based pagination that actually works
-  page: authedProcedure
+  page: publicProcedure
     .input(
       z.object({
-        cursor: z.number().nullish(), // offset
+        cursor: z.number().nullish(), 
         limit: z.number().int().min(1).max(100).default(30),
         position: z.enum(["GK", "DF", "MD", "FW", "ALL"]).default("ALL"),
         forSale: z.boolean().optional(),
         teamScope: z.enum(["all", "mine"]).default("all"),
-        teamId: z.string().optional(), // <-- NEW explicit team filter
+        teamId: z.string().optional(), 
+        q: z.string().trim().min(1).max(100).optional(), 
+        sort: z.enum(["priceAsc", "priceDesc"]).optional(), 
       })
     )
     .query(async ({ ctx, input }) => {
       const offset = input.cursor ?? 0;
 
-      console.log("Player pagination request:", {
-        offset,
-        limit: input.limit,
-        position: input.position,
-        forSale: input.forSale,
-        teamScope: input.teamScope,
-        teamId: input.teamId,
-        userId: ctx.user?.id,
-      });
-
       const whereBase: Prisma.PlayerWhereInput = {};
       if (input.position !== "ALL") whereBase.position = input.position;
       if (input.forSale === true) whereBase.listing = { isNot: null };
+      if (input.q) whereBase.name = { contains: input.q, mode: "insensitive" };
 
       if (input.teamId) {
-        // explicit filter from Teams page
         whereBase.teamId = input.teamId;
       } else if (input.teamScope === "mine") {
+        if (!ctx.user) {
+          throw new TRPCError({ code: "UNAUTHORIZED", message: "Sign in to view your team" });
+        }
         const meTeam = await ctx.prisma.team.findUnique({
-          where: { userId: ctx.user!.id },
+          where: { userId: ctx.user.id },
           select: { id: true },
         });
         if (!meTeam)
@@ -80,10 +71,12 @@ export const playerRouter = router({
         whereBase.teamId = meTeam.id;
       }
 
-      console.log("Prisma whereBase clause:", whereBase);
+      const orderBy: Prisma.PlayerOrderByWithRelationInput[] = [];
+      if (input.sort === "priceAsc") orderBy.push({ listing: { askingPriceCents: "asc" } });
+      if (input.sort === "priceDesc") orderBy.push({ listing: { askingPriceCents: "desc" } });
+      orderBy.push({ id: "asc" });
 
       const total = await ctx.prisma.player.count({ where: whereBase });
-      console.log("Total players matching filter:", total);
 
       const items = await ctx.prisma.player.findMany({
         where: whereBase,
@@ -91,30 +84,16 @@ export const playerRouter = router({
           team: { select: { id: true, name: true, budgetCents: true } },
           listing: true,
         },
-        orderBy: { id: "asc" },
+        orderBy,
         skip: offset,
         take: input.limit,
       });
 
       const nextCursor = offset + items.length < total ? offset + items.length : null;
 
-      const returnedIds = items.map((p) => p.id);
-      console.log("Player pagination response:", {
-        requestedLimit: input.limit,
-        actualReturned: items.length,
-        offset,
-        total,
-        nextCursor,
-        hasMore: !!nextCursor,
-        firstItemId: items[0]?.id,
-        lastItemId: items[items.length - 1]?.id,
-        returnedIds,
-      });
-
       return { items, nextCursor, total };
     }),
 
-  // List or edit price (owner only)
   listForSale: authedProcedure
     .input(z.object({ playerId: z.string(), priceCents: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
@@ -152,7 +131,6 @@ export const playerRouter = router({
       return { ok: true };
     }),
 
-  // Unlist (owner only)
   unlist: authedProcedure
     .input(z.object({ playerId: z.string() }))
     .mutation(async ({ ctx, input }) => {
@@ -184,7 +162,6 @@ export const playerRouter = router({
       return { ok: true };
     }),
 
-  // Buy at 95% (checks: not yours, budget, roster < 25)
   buyAt95: authedProcedure
     .input(z.object({ playerId: z.string() }))
     .mutation(async ({ ctx, input }) => {

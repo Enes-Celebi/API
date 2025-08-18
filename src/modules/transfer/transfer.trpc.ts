@@ -1,13 +1,16 @@
-// server/modules/transfer/transfer.trpc.ts
 import { router, authedProcedure, z } from "../../trpc/procedures";
+import type { Prisma } from "@prisma/client";
 
 export const transferRouter = router({
-  // Paginated list of transfers for *my* team (as buyer or seller)
   page: authedProcedure
     .input(
       z.object({
-        cursor: z.number().nullish(), // offset
+        cursor: z.number().nullish(), 
         limit: z.number().int().min(1).max(100).default(25),
+        q: z.string().trim().min(1).max(100).optional(),
+        kind: z.enum(["all", "buy", "sell"]).default("all"),
+        teamId: z.string().optional(), 
+        sort: z.enum(["priceAsc", "priceDesc"]).optional(),
       })
     )
     .query(async ({ ctx, input }) => {
@@ -19,15 +22,50 @@ export const transferRouter = router({
       });
       if (!meTeam) return { items: [], nextCursor: null, total: 0 };
 
-      const where = {
+      const where: Prisma.TransferWhereInput = {
         OR: [{ buyerTeamId: meTeam.id }, { sellerTeamId: meTeam.id }],
       };
+
+      if (input.kind === "buy") where.buyerTeamId = meTeam.id;
+      if (input.kind === "sell") where.sellerTeamId = meTeam.id;
+
+      if (input.teamId) {
+        const andArr: Prisma.TransferWhereInput[] = Array.isArray(where.AND)
+          ? (where.AND as Prisma.TransferWhereInput[])
+          : where.AND
+          ? [where.AND as Prisma.TransferWhereInput]
+          : [];
+        andArr.push({
+          OR: [
+            { buyerTeamId: input.teamId, sellerTeamId: meTeam.id },
+            { sellerTeamId: input.teamId, buyerTeamId: meTeam.id },
+          ],
+        });
+        where.AND = andArr;
+      }
+
+      if (input.q) {
+        const matches = await ctx.prisma.player.findMany({
+          where: { name: { contains: input.q, mode: "insensitive" } },
+          select: { id: true },
+        });
+        const ids = matches.map((p) => p.id);
+        if (ids.length === 0) {
+          return { items: [], nextCursor: null, total: 0 };
+        }
+        where.playerId = { in: ids };
+      }
+
+      const orderBy: Prisma.TransferOrderByWithRelationInput[] = [];
+      if (input.sort === "priceAsc") orderBy.push({ soldPriceCents: "asc" });
+      if (input.sort === "priceDesc") orderBy.push({ soldPriceCents: "desc" });
+      orderBy.push({ createdAt: "desc" });
 
       const total = await ctx.prisma.transfer.count({ where });
 
       const rows = await ctx.prisma.transfer.findMany({
         where,
-        orderBy: { createdAt: "desc" },
+        orderBy,
         skip: offset,
         take: input.limit,
         select: {
@@ -45,11 +83,8 @@ export const transferRouter = router({
         },
       });
 
-      // load player names and team names in one go
-      const playerIds = Array.from(new Set(rows.map(r => r.playerId)));
-      const teamIds = Array.from(
-        new Set(rows.flatMap(r => [r.sellerTeamId, r.buyerTeamId]))
-      );
+      const playerIds = Array.from(new Set(rows.map((r) => r.playerId)));
+      const teamIds = Array.from(new Set(rows.flatMap((r) => [r.sellerTeamId, r.buyerTeamId])));
 
       const [players, teams] = await Promise.all([
         ctx.prisma.player.findMany({
@@ -62,8 +97,8 @@ export const transferRouter = router({
         }),
       ]);
 
-      const playerNameById = new Map(players.map(p => [p.id, p.name]));
-      const teamNameById = new Map(teams.map(t => [t.id, t.name]));
+      const playerNameById = new Map(players.map((p) => [p.id, p.name]));
+      const teamNameById = new Map(teams.map((t) => [t.id, t.name]));
 
       const items = rows.map((r) => {
         const perspective = r.buyerTeamId === meTeam.id ? "buy" : "sell";
@@ -85,13 +120,11 @@ export const transferRouter = router({
         };
       });
 
-      const nextCursor =
-        offset + items.length < total ? offset + items.length : null;
+      const nextCursor = offset + items.length < total ? offset + items.length : null;
 
       return { items, nextCursor, total };
     }),
 
-  // Single transfer with enriched detail for my perspective
   byId: authedProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {

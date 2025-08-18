@@ -1,58 +1,54 @@
-// server/routes/team.trpc.ts
-import { router, authedProcedure, z } from "../../trpc/procedures";
+import { router, publicProcedure, authedProcedure, z } from "../../trpc/procedures";
 import { TRPCError } from "@trpc/server";
 
 export const teamRouter = router({
-  // === NEW: list teams with counts & averages for cards ===
-  list: authedProcedure.query(async ({ ctx }) => {
-    // base team info
-    const teams = await ctx.prisma.team.findMany({
-      select: { id: true, name: true, budgetCents: true },
-      orderBy: { name: "asc" },
-    });
-
-    // init maps (so teams with 0 players render fine)
-    const countsByTeam = new Map<string, { GK: number; DF: number; MD: number; FW: number }>();
-    const avgByTeam = new Map<string, { skill: number; tactic: number; physical: number }>();
-    for (const t of teams) {
-      countsByTeam.set(t.id, { GK: 0, DF: 0, MD: 0, FW: 0 });
-      avgByTeam.set(t.id, { skill: 0, tactic: 0, physical: 0 });
-    }
-
-    // position counts
-    const countsRaw = await ctx.prisma.player.groupBy({
-      by: ["teamId", "position"],
-      _count: { _all: true },
-    });
-    for (const row of countsRaw) {
-      const bucket = countsByTeam.get(row.teamId);
-      if (!bucket) continue;
-      (bucket as any)[row.position] = row._count._all; // GK | DF | MD | FW
-    }
-
-    // averages (rounded)
-    const avgsRaw = await ctx.prisma.player.groupBy({
-      by: ["teamId"],
-      _avg: { skill: true, tactic: true, physical: true },
-    });
-    for (const row of avgsRaw) {
-      avgByTeam.set(row.teamId, {
-        skill: Math.round(row._avg.skill ?? 0),
-        tactic: Math.round(row._avg.tactic ?? 0),
-        physical: Math.round(row._avg.physical ?? 0),
+  list: publicProcedure
+    .input(z.object({ q: z.string().trim().min(1).max(100).optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      const teams = await ctx.prisma.team.findMany({
+        where: input?.q ? { name: { contains: input.q, mode: "insensitive" } } : undefined,
+        select: { id: true, name: true, budgetCents: true },
+        orderBy: { name: "asc" },
       });
-    }
 
-    return teams.map((t) => ({
-      id: t.id,
-      name: t.name,
-      budgetCents: t.budgetCents,
-      counts: countsByTeam.get(t.id)!,
-      avg: avgByTeam.get(t.id)!,
-    }));
-  }),
+      const countsByTeam = new Map<string, { GK: number; DF: number; MD: number; FW: number }>();
+      const avgByTeam = new Map<string, { skill: number; tactic: number; physical: number }>();
+      for (const t of teams) {
+        countsByTeam.set(t.id, { GK: 0, DF: 0, MD: 0, FW: 0 });
+        avgByTeam.set(t.id, { skill: 0, tactic: 0, physical: 0 });
+      }
 
-  // === existing endpoints you had ===
+      const countsRaw = await ctx.prisma.player.groupBy({
+        by: ["teamId", "position"],
+        _count: { _all: true },
+      });
+      for (const row of countsRaw) {
+        const bucket = countsByTeam.get(row.teamId);
+        if (!bucket) continue;
+        (bucket as any)[row.position] = row._count._all;
+      }
+
+      const avgsRaw = await ctx.prisma.player.groupBy({
+        by: ["teamId"],
+        _avg: { skill: true, tactic: true, physical: true },
+      });
+      for (const row of avgsRaw) {
+        avgByTeam.set(row.teamId, {
+          skill: Math.round(row._avg.skill ?? 0),
+          tactic: Math.round(row._avg.tactic ?? 0),
+          physical: Math.round(row._avg.physical ?? 0),
+        });
+      }
+
+      return teams.map((t) => ({
+        id: t.id,
+        name: t.name,
+        budgetCents: t.budgetCents,
+        counts: countsByTeam.get(t.id)!,
+        avg: avgByTeam.get(t.id)!,
+      }));
+    }),
+
   myTeam: authedProcedure.query(async ({ ctx }) => {
     return ctx.prisma.team.findUnique({
       where: { userId: ctx.user!.id },
