@@ -2,53 +2,58 @@ services:
   db:
     image: postgres:16-alpine
     container_name: fm-db
+    env_file: [.env.docker]
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
+      POSTGRES_DB: ${POSTGRES_DB:-app}
+    # If you already have Postgres running on your Mac at 5432,
+    # change to "5433:5432" here or stop the local service.
     ports:
-      - "5432:5432" 
+      - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -h 127.0.0.1"]
+      # Use $$ so docker-compose passes $ through to the container
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB -h 127.0.0.1"]
       interval: 2s
       timeout: 2s
       retries: 30
 
+  # Build the image ONCE here and tag it; also runs migrations once.
   migrate:
     build: { context: ., dockerfile: Dockerfile }
-    image: fm/api:latest
+    image: fm-api:latest
     container_name: fm-migrate
-    env_file: [ .env.docker ]
+    env_file: [.env.docker]
     depends_on:
       db:
         condition: service_healthy
-    command: [ "npx", "prisma", "migrate", "deploy" ]
+    command: ["npx", "prisma", "migrate", "deploy"]
     restart: "no"
 
+  # Reuse the built image (no build section here)
   api:
-    build: { context: ., dockerfile: Dockerfile }
-    image: fm/api:latest
+    image: fm-api:latest
     container_name: fm-api
-    env_file: [ .env.docker ]
+    env_file: [.env.docker]
     depends_on:
       migrate:
         condition: service_completed_successfully
     ports:
       - "4000:4000"
-    command: [ "node", "dist/server.js" ]
+    command: ["node", "dist/server.js"]
     restart: unless-stopped
 
+  # Reuse the built image (no build section here)
   worker:
-    build: { context: ., dockerfile: Dockerfile }
-    image: fm/api:latest
+    image: fm-api:latest
     container_name: fm-worker
-    env_file: [ .env.docker ]
+    env_file: [.env.docker]
     depends_on:
       migrate:
         condition: service_completed_successfully
-    command: [ "node", "dist/workers/team.worker.js" ]
+    command: ["node", "dist/workers/team.worker.js"]
     restart: unless-stopped
 
 volumes:
